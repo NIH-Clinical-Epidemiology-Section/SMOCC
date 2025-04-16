@@ -1,0 +1,408 @@
+---
+title: "MOCC Analysis"
+author: "Guoqing Diao"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+```{r pressure, echo=FALSE}
+library(MASS)
+library(sandwich)
+library(ggplot2)
+```
+
+```{r, echo=TRUE}
+setwd("/Users/gdiao/Dropbox/GWU/BSC/NIH/MOCC/Data")
+
+### Read data provided by Alex 
+mocc  <- arrow::read_feather("mocc_update_1-10-25.feather")
+
+### Check variable names
+colnames(mocc)
+
+### Frequencies of surge decile 
+table(mocc$decile)
+
+### create a numerical surge variable
+mocc$surge <- 1*(mocc$decile=="0-9") +
+  2*(mocc$decile=="10-19") +
+  3*(mocc$decile=="20-29") +
+  4*(mocc$decile=="30-39") +
+  5*(mocc$decile=="40-49") +
+  6*(mocc$decile=="50-59") +
+  7*(mocc$decile=="60-69") +
+  8*(mocc$decile=="70-79") +
+  9*(mocc$decile=="80-89") +
+  10*(mocc$decile=="90-100")
+
+### center surge variable 
+meansurge <- mean(mocc$surge, na.rm = TRUE)
+minsurge <- min(mocc$surge, na.rm = TRUE)
+maxsurge <- max(mocc$surge, na.rm = TRUE)
+mocc$surge <- mocc$surge - mean(mocc$surge, na.rm = TRUE)
+print(meansurge) 
+
+### Four age categories using quartiles
+age_quartiles <- quantile(mocc$age, probs=c(0.25, 0.50, 0.75),
+                          na.rm=T)
+age_quartiles
+mocc$age_4cat <- 1*(mocc$age <= age_quartiles[1]) +
+  2*(mocc$age > age_quartiles[1] & mocc$age <= age_quartiles[2]) +
+  3*(mocc$age > age_quartiles[2] & mocc$age <= age_quartiles[3]) +
+  4*(mocc$age > age_quartiles[3])
+
+### exclude observations with missing values of relative dates
+mocc <- mocc[!is.na(mocc$EventDate_MoccInit_Diff),]
+
+### check if all observations were from MOCC states
+### table(mocc$MOCC_Binary_Final)
+
+### convert Date to Year and Month
+mocc$Month_Yr <- format(as.Date(mocc$date), "%Y-%m")
+### use [-3, 3] as week 0
+mocc$week <- floor((mocc$EventDate_MoccInit_Diff+3)/7)
+
+### days from 2019-01-01
+mocc$days <- (as.numeric(as.POSIXct(mocc$date)-as.POSIXct(mocc$date[1]), units="days")) 
+#mocc[mocc$days == 1459,]
+#mocc[mocc$days == 1460,]
+## last day was 2022-12-30
+
+### determine the period in which data were available from all seven 
+### Eight MOCC states with a MOCC initiation date on or after 6/1/2020 
+### (Colorado, Maryland, Alaska, Utah, Virginia, Idaho, Oregon, NC)
+
+mocc_initiation_dates <- c("2020-11-30", # Maryland
+                          "2020-12-01", # Alaska
+                          #"2020-04-16", # Arizona
+                          "2020-11-01", # Colorado
+                          #"2019-12-13", #Georgia
+                          "2021-08-19", # Idaho
+                          #"2020-05-28", # Minnesota
+                          "2020-09-10", # North Carolina
+                          "2021-08-21", # Oregon
+                          "2021-08-01", # Utah
+                          "2021-08-16") # Virginia 
+                          #"2020-05-01" # Washington
+mocc_initiation_dates <- as.Date(mocc_initiation_dates)
+
+### indicator whether data were from Maryland
+mocc$Maryland <- 1*(floor(as.numeric(as.POSIXct(mocc_initiation_dates[1]) -
+             as.POSIXct(mocc$date), units="days")) == -mocc$EventDate_MoccInit_Diff)  
+table(mocc$Maryland)
+
+### indicator whether data were from Alaska
+mocc$Alaska <- 1*(floor(as.numeric(as.POSIXct(mocc_initiation_dates[2]) -
+             as.POSIXct(mocc$date), units="days")) == -mocc$EventDate_MoccInit_Diff)  
+table(mocc$Alaska)
+
+### indicator whether data were from Colorado
+
+mocc$Colorado <- 1*(floor(as.numeric(as.POSIXct(mocc_initiation_dates[3]) -
+             as.POSIXct(mocc$date), units="days")) == -mocc$EventDate_MoccInit_Diff)     
+table(mocc$Colorado)
+
+### indicator whether data were from Idaho
+
+mocc$Idaho <- 1*(floor(as.numeric(as.POSIXct(mocc_initiation_dates[4]) -
+             as.POSIXct(mocc$date), units="days")) == -mocc$EventDate_MoccInit_Diff)  
+table(mocc$Idaho)
+
+### indicator whether data were from North Carolina
+
+mocc$NC <- 1*(floor(as.numeric(as.POSIXct(mocc_initiation_dates[5]) -
+             as.POSIXct(mocc$date), units="days")) == -mocc$EventDate_MoccInit_Diff)  
+table(mocc$NC)
+
+### indicator whether data were from Oregon
+
+mocc$Oregon <- 1*(floor(as.numeric(as.POSIXct(mocc_initiation_dates[6]) -
+             as.POSIXct(mocc$date), units="days")) == -mocc$EventDate_MoccInit_Diff)  
+table(mocc$Oregon)
+
+### indicator whether data were from Utah
+
+mocc$Utah <- 1*(floor(as.numeric(as.POSIXct(mocc_initiation_dates[7]) -
+             as.POSIXct(mocc$date), units="days")) == -mocc$EventDate_MoccInit_Diff)  
+table(mocc$Utah)
+
+### indicator whether data were from Virginia
+
+mocc$Virginia <- 1*(floor(as.numeric(as.POSIXct(mocc_initiation_dates[8]) -
+             as.POSIXct(mocc$date), units="days")) == -mocc$EventDate_MoccInit_Diff)     
+### Check the time period when data are available for each MOCC state
+summary(mocc$week[mocc$Maryland==1])
+summary(mocc$week[mocc$Alaska==1])
+summary(mocc$week[mocc$Colorado==1])
+summary(mocc$week[mocc$Idaho==1])
+summary(mocc$week[mocc$NC==1])
+summary(mocc$week[mocc$Oregon==1])
+summary(mocc$week[mocc$Utah==1])
+summary(mocc$week[mocc$Virginia==1])
+
+### indicator whether data were from one of the eight MOCC states
+
+mocc$eight_moccstates <- mocc$Maryland + mocc$Alaska + mocc$Colorado + 
+  mocc$Idaho + mocc$Oregon + mocc$Utah + mocc$Virginia + mocc$NC
+
+### indicator whether data were from one of the four MOCC states
+mocc$four_moccstates <- mocc$Idaho + mocc$Oregon + mocc$Utah + mocc$Virginia 
+
+### time period such that data from all eight MOCC states are available
+minweek <- max(c(min(mocc$week[mocc$Maryland==1]),
+    min(mocc$week[mocc$Alaska==1]),
+    min(mocc$week[mocc$Colorado==1]),
+    min(mocc$week[mocc$Idaho==1]),
+    min(mocc$week[mocc$NC==1]),
+    min(mocc$week[mocc$Oregon==1]),
+    min(mocc$week[mocc$Utah==1]),
+    min(mocc$week[mocc$Virginia==1])))
+
+maxweek <- min(c(max(mocc$week[mocc$Maryland==1]),
+    max(mocc$week[mocc$Alaska==1]),
+    max(mocc$week[mocc$Colorado==1]),
+    max(mocc$week[mocc$Idaho==1]),
+    max(mocc$week[mocc$NC==1]),
+    max(mocc$week[mocc$Oregon==1]),
+    max(mocc$week[mocc$Utah==1]),
+    max(mocc$week[mocc$Virginia==1])))
+
+mindiff_pre <- min(as.numeric(as.POSIXct(mocc_initiation_dates)-
+             as.POSIXct(as.Date("2019-01-01")), units="days"))
+
+summary(as.numeric(as.POSIXct(mocc_initiation_dates)-
+             as.POSIXct(as.Date("2022-12-30")), units="days"))
+mindiff_post <- min(-as.numeric(as.POSIXct(mocc_initiation_dates)-
+             as.POSIXct(as.Date("2022-12-30")), units="days"))
+
+### Create a data set with data from the eight MOCC states only that were
+### available at each (relative) week
+mocc_v2 <- mocc[mocc$eight_moccstates==1,]
+mocc_v2 <- mocc_v2[mocc_v2$week >= minweek
+                 & mocc_v2$week <= maxweek,]
+### check if the first week and the last week were full week
+summary(mocc_v2$week)
+min_week <- min(mocc_v2$week)
+max_week <- max(mocc_v2$week)
+
+### full week in week -14
+table(mocc$date[mocc$NC == 1 & mocc$week == -14])
+
+table(mocc$date[mocc$Idaho == 1 & mocc$week == 71])
+
+### Remove data from week -14 and 71 since they are not full weeks
+mocc_v2 <- mocc_v2[mocc_v2$week > min_week,]
+mocc_v2 <- mocc_v2[mocc_v2$week < max_week,]
+
+summary(mocc_v2$week)
+### table(mocc_v2$week)
+
+### check states and weeks with missing surge data
+table(is.na(mocc_v2$surge[mocc_v2$Maryland==1]), mocc_v2$week[mocc_v2$Maryland==1])
+table(is.na(mocc_v2$surge[mocc_v2$Alaska==1]), mocc_v2$week[mocc_v2$Alaska==1])
+table(is.na(mocc_v2$surge[mocc_v2$Colorado==1]), mocc_v2$week[mocc_v2$Colorado==1])
+
+table(is.na(mocc_v2$surge[mocc_v2$Idaho==1]), mocc_v2$week[mocc_v2$Idaho==1])
+table(is.na(mocc_v2$surge[mocc_v2$NC==1]), mocc_v2$week[mocc_v2$NC==1])
+table(is.na(mocc_v2$surge[mocc_v2$Oregon==1]), mocc_v2$week[mocc_v2$Oregon==1])
+table(is.na(mocc_v2$surge[mocc_v2$Utah==1]), mocc_v2$week[mocc_v2$Utah==1])
+table(is.na(mocc_v2$surge[mocc_v2$Virginia==1]), mocc_v2$week[mocc_v2$Virginia==1])
+
+### Combine Rural   Suburban   Wilderness
+mocc_v2$Urbanicity_2cat <- 1*(mocc_v2$urbanicity=="Urban") +
+  2*(mocc_v2$urbanicity != "Urban")
+mocc_v2$Urbanicity_2cat[is.na(mocc_v2$urbanicity)] <- NA
+
+mocc_v2$Urbanicity_2cat <-  factor(mocc_v2$Urbanicity_2cat,
+       labels = c("Urban", "Non-Urban"))
+### All eight states initiated MOCC post 1st wave
+### no need to conduct separate analysis for Pandemic period and Post 1st Wave period
+
+dim(mocc_v2)
+### Total number of IFTs using data from seven MOCC states
+table(mocc_v2$week)
+
+### save the data to a csv file
+write.csv(mocc_v2, file="mocc_eightstates_final.csv")
+
+```
+
+
+\bf ITS Analysis: full data from eight MOCC states
+
+```{r, echo=TRUE}
+source("MOCC_Routines_final.R")
+library(ggplot2)
+fitnb_full <- mocc_routines_v4(mocc_v2, "full_1.pdf", 
+              "full_2.pdf", model_selected = NULL)
+library(knitr)
+kable(round(fitnb_full$fit_nb_coefficients, digits=4), caption="Interrupted time series analysis (logarithm of rate ratio) under the negative-binomial model")
+
+kable(round(fitnb_full$fit_nb_exp_coefficients, digits=4), caption="Interrupted time series analysis (rate ratio) under the negative-binomial model")
+
+kable(round(fitnb_full$parest, digits=4), caption="Effects of surge and MOCC initiation on the logarithm of IFT rate")
+
+kable(round(fitnb_full$parest_exp, digits=4), caption="Effects of surge and MOCC initiation on the IFT rate")
+
+### Creating scatter plot with its confidence intervals 
+gfg<-round(data.frame(x = c(-1:7)*10, 
+                      y = fitnb_full$parest_exp[1:9,1], 
+                      low = fitnb_full$parest_exp[1:9,2], 
+                      up = fitnb_full$parest_exp[1:9,3]), 4) 
+ggplot(gfg, aes(x = factor(x), y = y )) + geom_point() + 
+  geom_errorbar(aes(ymin = low, 
+                    ymax = up)) + 
+  scale_y_continuous(trans='log') +
+  xlab("Week") +
+  ylab("Surge Effect on IFT Rate") 
+  ggsave("surge_effect_full.pdf")
+
+  gfg<-round(data.frame(x = 1:10, 
+                      y = fitnb_full$parest_exp[10:19,1], 
+                      low = fitnb_full$parest_exp[10:19,2], 
+                      up = fitnb_full$parest_exp[10:19,3]), 4) 
+ggplot(gfg, aes(x = factor(x), y = y )) + geom_point() + 
+  geom_errorbar(aes(ymin = low, 
+                    ymax = up)) + 
+  scale_y_continuous(breaks=c(0, 1, 5, 10, 15, 20, 25), trans='log') +
+  xlab("Surge") +
+  ylab("Immediate MOCC Effect on IFT Rate") 
+  ggsave("immediate_MOCC_effect_full.pdf")
+
+    gfg<-round(data.frame(x = 1:10, 
+                      y = fitnb_full$parest_exp[20:29,1], 
+                      low = fitnb_full$parest_exp[20:29,2], 
+                      up = fitnb_full$parest_exp[20:29,3]), 4) 
+ggplot(gfg, aes(x = factor(x), y = y )) + geom_point() + 
+  geom_errorbar(aes(ymin = low, 
+                    ymax = up)) + 
+  scale_y_continuous(trans='log') +
+  xlab("Surge") +
+  ylab("Sustained MOCC Effect on IFT Rate") 
+  ggsave("sustained_MOCC_effect_full.pdf")
+
+
+### predicted IFT rate (and 95 CIs) from relative 
+### weeks -13 to 70 at specified surge decile and season   
+library(xlsx)
+
+for (surge in 1:10)
+  for (season in c("Spring", "Summer", "Fall", "Winter"))
+  {
+    preds <- mocc_pred(fit_nb=fitnb_full$fit_nb, covmat=fitnb_full$covmat,
+          data_ad=fitnb_full$data_ad, 
+          surge=surge, meansurge=meansurge, season=season)
+    if (surge == 1 & season == "Spring")
+    {
+      write.xlsx(data.frame(preds), file="MOCC_pred_full.xlsx",
+                 sheetName = paste("surge_", surge, "_", season, sep=""),
+                 row.names = FALSE) 
+      } else
+      {
+        write.xlsx(data.frame(preds), file="MOCC_pred_full.xlsx",
+                 sheetName = paste("surge_", surge, "_", season, sep=""),
+                 row.names = FALSE, append=TRUE) 
+      }
+  }
+  
+
+```
+
+
+\bf ITS Analysis: data from each category of Urbancity: Rural, Suburban, Urban, Wilderness
+
+```{r, echo=TRUE}
+taburbancity <- table(mocc_v2$urbanicity)
+rownames_urbancity <- rownames(taburbancity)
+for (i in 1:length(taburbancity))
+{
+  print(rownames_urbancity[i])
+  print(mocc_routines_v4(mocc_v2[mocc_v2$urbanicity == rownames_urbancity[i],], paste(rownames_urbancity[i],"_1.pdf",sep=""),
+                paste(rownames_urbancity[i],"_2.pdf",sep=""), model_selected = 3))
+}
+```
+
+\bf ITS Analysis: data from each category of Urbancity\_2cat:  Urban vs Non-Urban (Rural, Suburban, Wilderness)
+
+```{r, echo=TRUE}
+taburbancity_2cat <- table(mocc_v2$Urbanicity_2cat)
+rownames_urbancity_2cat <- rownames(taburbancity_2cat)
+for (i in 1:length(taburbancity_2cat))
+{
+  print(rownames_urbancity_2cat[i])
+  print(mocc_routines_v4(mocc_v2[mocc_v2$Urbanicity_2cat == rownames_urbancity_2cat[i],], paste(rownames_urbancity_2cat[i],"_1.pdf",sep=""),
+                paste(rownames_urbancity_2cat[i],"_2.pdf",sep=""), model_selected = 3))
+}
+```
+
+\bf ITS Analysis: data from each category of Region: Midwest, South, West (algorithm doesn't converge)
+
+```{r, echo=TRUE}
+tabregion <- table(mocc_v2$region)
+rownames_region <- rownames(tabregion)
+for (i in 1:length(tabregion))
+{
+  print(rownames_region[i])
+  print(mocc_routines_v4(mocc_v2[mocc_v2$region == rownames_region[i],], paste(rownames_region[i],"_1.pdf",sep=""),
+                paste(rownames_region[i],"_2.pdf",sep=""), model_selected = 3))
+}
+```
+
+\bf ITS Analysis: data from each category of age groups: <=q1, (q1, q2], (q2, q3], >q3
+
+```{r, echo=TRUE}
+tabage <- table(mocc_v2$age_4cat)
+rownames_age <- rownames(tabage)
+for (i in 1:length(tabage))
+{
+  print(rownames_age[i])
+  print(mocc_routines_v4(mocc_v2[mocc_v2$age_4cat == rownames_age[i],], paste("age",rownames_age[i],"_1.pdf",sep=""),
+                paste("age",rownames_age[i],"_2.pdf",sep=""), model_selected = 3))
+}
+```
+
+\bf ITS Analysis: data from each category of transport mode: air and ground
+
+```{r, echo=TRUE}
+tmptab <- table(mocc_v2$transport_mode)
+tmprownames <- rownames(tmptab)
+for (i in 1:length(tmptab))
+{
+  print(tmprownames[i])
+  print(mocc_routines_v4(mocc_v2[mocc_v2$transport_mode == tmprownames[i],], paste(tmprownames[i],"_1.pdf",sep=""),
+                paste(tmprownames[i],"_2.pdf",sep=""), model_selected = 3))
+}
+```
+
+\bf ITS Analysis: data from each category of level of care: ALS, BLS, specialty
+
+```{r, echo=TRUE}
+tmptab <- table(mocc_v2$level_of_care)
+tmprownames <- rownames(tmptab)
+for (i in 1:length(tmptab))
+{
+  print(tmprownames[i])
+  print(mocc_routines_v4(mocc_v2[mocc_v2$level_of_care == tmprownames[i],], paste(tmprownames[i],"_1.pdf",sep=""),
+                paste(tmprownames[i],"_2.pdf",sep=""), model_selected = 3))
+}
+```
+
+\bf ITS Analysis: data from each category of inital patient acuity: black, green, red, unknown, yellow
+
+```{r, echo=TRUE}
+table(mocc$initial_acuity)
+### too few black, combined with unknown
+mocc_v2$initial_acuity[mocc_v2$initial_acuity=="black"] <- 
+  "unknown"
+tmptab <- table(mocc_v2$initial_acuity)
+tmprownames <- rownames(tmptab)
+for (i in 1:length(tmptab))
+{
+  print(tmprownames[i])
+  print(mocc_routines_v4(mocc_v2[mocc_v2$initial_acuity == tmprownames[i],], paste(tmprownames[i],"_1.pdf",sep=""),
+                paste(tmprownames[i],"_2.pdf",sep=""), model_selected = 3))
+}
+```
